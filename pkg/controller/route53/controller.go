@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/h3poteto/aws-global-accelerator-controller/pkg/apis"
+	cloudaws "github.com/h3poteto/aws-global-accelerator-controller/pkg/cloudprovider/aws"
 	"github.com/h3poteto/aws-global-accelerator-controller/pkg/reconcile"
 
 	corev1 "k8s.io/api/core/v1"
@@ -29,17 +30,23 @@ import (
 const controllerAgentName = "route53-controller"
 
 type Route53Config struct {
-	Workers     int
-	ClusterName string
+	Workers           int
+	ClusterName       string
+	AnnotationFilters map[string]string
+	ZoneType          cloudaws.ZoneType
+	TXTOwnerID        string
 }
 
 type Route53Controller struct {
-	clusterName   string
-	kubeclint     kubernetes.Interface
-	serviceLister corelisters.ServiceLister
-	serviceSynced cache.InformerSynced
-	ingressLister networkinglisters.IngressLister
-	ingressSynced cache.InformerSynced
+	clusterName       string
+	annotationFilters map[string]string
+	txtOwnerID        string
+	zoneType          cloudaws.ZoneType
+	kubeclint         kubernetes.Interface
+	serviceLister     corelisters.ServiceLister
+	serviceSynced     cache.InformerSynced
+	ingressLister     networkinglisters.IngressLister
+	ingressSynced     cache.InformerSynced
 
 	serviceQueue workqueue.RateLimitingInterface
 	ingressQueue workqueue.RateLimitingInterface
@@ -54,11 +61,14 @@ func NewRoute53Controller(kubeclient kubernetes.Interface, informerFactory infor
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
 
 	controller := &Route53Controller{
-		clusterName:  config.ClusterName,
-		kubeclint:    kubeclient,
-		recorder:     recorder,
-		serviceQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), controllerAgentName+"-service"),
-		ingressQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), controllerAgentName+"-ingress"),
+		clusterName:       config.ClusterName,
+		annotationFilters: config.AnnotationFilters,
+		zoneType:          config.ZoneType,
+		txtOwnerID:        config.TXTOwnerID,
+		kubeclint:         kubeclient,
+		recorder:          recorder,
+		serviceQueue:      workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), controllerAgentName+"-service"),
+		ingressQueue:      workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), controllerAgentName+"-ingress"),
 	}
 	{
 		f := informerFactory.Core().V1().Services()
@@ -86,7 +96,7 @@ func NewRoute53Controller(kubeclient kubernetes.Interface, informerFactory infor
 
 func (c *Route53Controller) addServiceNotification(obj interface{}) {
 	svc := obj.(*corev1.Service)
-	if wasLoadBalancerService(svc) && hasHostnameAnnotation(svc) {
+	if wasLoadBalancerService(svc) && hasHostnameAnnotation(svc) && c.matchesAnnotationFilters(svc) {
 		klog.V(4).Infof("Service %s/%s is created", svc.Namespace, svc.Name)
 		c.enqueueService(svc)
 	}
@@ -98,8 +108,8 @@ func (c *Route53Controller) updateServiceNotification(old, new interface{}) {
 	}
 	oldSvc := old.(*corev1.Service)
 	newSvc := new.(*corev1.Service)
-	if wasLoadBalancerService(newSvc) {
-		if hasHostnameAnnotation(newSvc) || hostnameAnnotationChanged(oldSvc, newSvc) {
+	if wasLoadBalancerService(newSvc) && (c.matchesAnnotationFilters(oldSvc) || c.matchesAnnotationFilters(newSvc)) {
+		if hasHostnameAnnotation(newSvc) || hostnameAnnotationChanged(oldSvc, newSvc) || c.filteredAnnotationChanged(oldSvc, newSvc) {
 			klog.V(4).Infof("Service %s/%s is updated", newSvc.Namespace, newSvc.Name)
 			c.enqueueService(newSvc)
 		}
@@ -129,7 +139,7 @@ func (c *Route53Controller) deleteServiceNotification(obj interface{}) {
 
 func (c *Route53Controller) addIngressNotification(obj interface{}) {
 	ingress := obj.(*networkingv1.Ingress)
-	if hasHostnameAnnotation(ingress) {
+	if hasHostnameAnnotation(ingress) && c.matchesAnnotationFilters(ingress) {
 		klog.V(4).Infof("Ingress %s/%s is created", ingress.Namespace, ingress.Name)
 		c.enqueueIngress(ingress)
 	}
@@ -141,7 +151,7 @@ func (c *Route53Controller) updateIngressNotification(old, new interface{}) {
 	}
 	oldIngress := old.(*networkingv1.Ingress)
 	newIngress := new.(*networkingv1.Ingress)
-	if hasHostnameAnnotation(newIngress) || hostnameAnnotationChanged(oldIngress, newIngress) {
+	if hasHostnameAnnotation(newIngress) || hostnameAnnotationChanged(oldIngress, newIngress) || c.filteredAnnotationChanged(oldIngress, newIngress) {
 		klog.V(4).Infof("Ingress %s/%s is updated", newIngress.Namespace, newIngress.Name)
 		c.enqueueIngress(newIngress)
 	}
@@ -249,4 +259,17 @@ func hostnameAnnotationChanged(old, new metav1.Object) bool {
 	_, oldHas := old.GetAnnotations()[apis.Route53HostnameAnnotation]
 	_, newHas := new.GetAnnotations()[apis.Route53HostnameAnnotation]
 	return oldHas != newHas
+}
+
+func (c *Route53Controller) matchesAnnotationFilters(obj metav1.Object) bool {
+	for key, value := range c.annotationFilters {
+		if v, ok := obj.GetAnnotations()[key]; !ok || v != value {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Route53Controller) filteredAnnotationChanged(old, new metav1.Object) bool {
+	return c.matchesAnnotationFilters(old) != c.matchesAnnotationFilters(new)
 }

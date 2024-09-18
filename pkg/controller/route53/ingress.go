@@ -23,7 +23,7 @@ func (c *Route53Controller) processIngressDelete(ctx context.Context, key string
 	if err != nil {
 		return reconcile.Result{}, pkgerrors.NewNoRetryErrorf("invalid resource key: %s", key)
 	}
-	cloud, err := cloudaws.NewAWS("us-west-2")
+	cloud, err := cloudaws.NewRoute53("us-west-2", c.zoneType, c.txtOwnerID)
 	if err != nil {
 		klog.Error(err)
 		return reconcile.Result{}, err
@@ -44,8 +44,8 @@ func (c *Route53Controller) processIngressCreateOrUpdate(ctx context.Context, ob
 	}
 
 	hostname, ok := ingress.Annotations[apis.Route53HostnameAnnotation]
-	if !ok {
-		cloud, err := cloudaws.NewAWS("us-west-2")
+	if !ok || !c.matchesAnnotationFilters(ingress) {
+		cloud, err := cloudaws.NewRoute53("us-west-2", c.zoneType, c.txtOwnerID)
 		if err != nil {
 			klog.Error(err)
 			return reconcile.Result{}, err
@@ -76,7 +76,7 @@ func (c *Route53Controller) processIngressCreateOrUpdate(ctx context.Context, ob
 				klog.Error(err)
 				return reconcile.Result{}, err
 			}
-			cloud, err := cloudaws.NewAWS(region)
+			cloud, err := cloudaws.NewRoute53(region, c.zoneType, c.txtOwnerID)
 			if err != nil {
 				klog.Error(err)
 				return reconcile.Result{}, err

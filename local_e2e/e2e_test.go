@@ -315,7 +315,7 @@ func waitUntilRoute53(cloud *cloudaws.AWS, hostnames []string, lbHostname, clust
 		Expect(err).ShouldNot(HaveOccurred())
 
 		err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
-			records, err := cloud.FindOwneredARecordSets(ctx, hostedZone, cloudaws.Route53OwnerValue(clusterName, resource, obj.GetNamespace(), obj.GetName()))
+			records, err := cloud.FindOwneredARecordSets(ctx, hostedZone, cloud.Route53OwnerValue(clusterName, resource, obj.GetNamespace(), obj.GetName()))
 			if err != nil {
 				return false, err
 			}
@@ -353,7 +353,7 @@ func waitUntilCleanup(cloud *cloudaws.AWS, hostnames []string, clusterName, reso
 			return err
 		}
 		err = wait.PollImmediate(10*time.Second, 10*time.Minute, func() (bool, error) {
-			records, err := cloud.FindOwneredARecordSets(ctx, hostedZone, cloudaws.Route53OwnerValue(clusterName, resource, obj.GetNamespace(), obj.GetName()))
+			records, err := cloud.FindOwneredARecordSets(ctx, hostedZone, cloud.Route53OwnerValue(clusterName, resource, obj.GetNamespace(), obj.GetName()))
 			if err != nil {
 				return false, err
 			}

@@ -10,12 +10,18 @@ import (
 )
 
 type AWS struct {
-	lb      *elbv2.Client
-	ga      *globalaccelerator.Client
-	route53 *route53.Client
+	lb                     *elbv2.Client
+	ga                     *globalaccelerator.Client
+	route53                *route53.Client
+	zoneType               ZoneType
+	txtRecordHeritageValue string
 }
 
 func NewAWS(region string) (*AWS, error) {
+	return NewRoute53(region, "", "")
+}
+
+func NewRoute53(region string, zoneType ZoneType, txtRecordHeritageValue string) (*AWS, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
 		return nil, err
@@ -31,8 +37,10 @@ func NewAWS(region string) (*AWS, error) {
 		o.Region = "us-west-2"
 	})
 	return &AWS{
-		lb:      lb,
-		ga:      ga,
-		route53: route53,
+		lb:                     lb,
+		ga:                     ga,
+		route53:                route53,
+		zoneType:               zoneType,
+		txtRecordHeritageValue: txtRecordHeritageValue,
 	}, nil
 }
